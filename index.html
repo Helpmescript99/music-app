@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <title>My Music Player</title>
+
+  <!-- NEW: Link to the app identity file -->
+  <link rel="manifest" href="manifest.json">
+
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -150,6 +154,16 @@
 
   <audio id="player"></audio>
 
+  <!-- NEW: Register the service worker for offline magic -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js');
+      });
+    }
+  </script>
+
+  <!-- Your main app logic -->
   <script>
     // ---------- GRAB ELEMENTS ----------
     const filePicker  = document.getElementById('filePicker');
@@ -165,19 +179,18 @@
     const nowPlaying  = document.getElementById('nowPlaying');
 
     // ---------- STATE ----------
-    let songs = [];            // [{ name, file, url }]
+    let songs = [];            
     let currentIndex = -1;
     let shuffleOn = false;
-    let repeatMode = 'off';    // 'off' | 'all' | 'one'
+    let repeatMode = 'off';    
     let searchTerm = '';
-    let db = null;             // the IndexedDB connection
+    let db = null;             
 
     // ---------- INDEXEDDB: open the database ----------
     function openDB() {
       return new Promise(function (resolve, reject) {
         const request = indexedDB.open('musicAppDB', 1);
 
-        // Runs only the first time (or when we change the version number)
         request.onupgradeneeded = function (event) {
           const database = event.target.result;
           if (!database.objectStoreNames.contains('songs')) {
@@ -258,7 +271,7 @@
         saveFileToDB(name, file);
       }
 
-      filePicker.value = ''; // lets you pick the same file again later
+      filePicker.value = ''; 
       renderPlaylist();
 
       if (wasEmpty && songs.length > 0) {
@@ -328,7 +341,7 @@
       }
     });
 
-    // ---------- NEXT / PREV INDEX (with shuffle + repeat) ----------
+    // ---------- NEXT / PREV INDEX ----------
     function getNextIndex() {
       if (songs.length === 0) return -1;
       if (songs.length === 1) return 0;
@@ -342,7 +355,7 @@
 
       const n = currentIndex + 1;
       if (n >= songs.length) {
-        return repeatMode === 'all' ? 0 : -1; // -1 means "stop"
+        return repeatMode === 'all' ? 0 : -1; 
       }
       return n;
     }
@@ -379,7 +392,7 @@
       shuffleBtn.classList.toggle('active', shuffleOn);
     });
 
-    // ---------- REPEAT (cycles off → all → one) ----------
+    // ---------- REPEAT ----------
     repeatBtn.addEventListener('click', function () {
       if (repeatMode === 'off') repeatMode = 'all';
       else if (repeatMode === 'all') repeatMode = 'one';
