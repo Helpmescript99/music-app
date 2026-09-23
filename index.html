@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My Music Player</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: system-ui, Arial, sans-serif;
+      background: #121212;
+      color: #fff;
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ---------- SIDEBAR ---------- */
+    .sidebar {
+      width: 240px;
+      background: #000;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .sidebar h1 { font-size: 20px; color: #1db954; }
+    .sidebar p { font-size: 12px; color: #b3b3b3; line-height: 1.5; }
+
+    #searchBox {
+      background: #1f1f1f;
+      border: 1px solid #333;
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      width: 100%;
+    }
+    #searchBox:focus { outline: none; border-color: #1db954; }
+
+    #filePicker { color: #fff; font-size: 12px; }
+
+    #clearBtn {
+      background: transparent;
+      border: 1px solid #444;
+      color: #999;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      margin-top: auto;
+    }
+    #clearBtn:hover { border-color: #e74c3c; color: #e74c3c; }
+
+    /* ---------- MAIN ---------- */
+    .main {
+      flex: 1;
+      padding: 20px;
+      padding-bottom: 110px;
+      overflow-y: auto;
+    }
+    .main h2 { margin-bottom: 15px; font-size: 18px; }
+
+    #songList { list-style: none; }
+    #songList li {
+      padding: 10px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      font-size: 15px;
+    }
+    #songList li:hover { background: #1f1f1f; }
+    #songList li.playing {
+      background: #1db954;
+      color: #000;
+      font-weight: bold;
+    }
+    #emptyMsg { color: #666; font-size: 14px; padding: 10px 14px; }
+
+    /* ---------- BOTTOM BAR ---------- */
+    .controls {
+      position: fixed;
+      bottom: 0;
+      left: 240px;
+      right: 0;
+      background: #181818;
+      padding: 15px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-top: 1px solid #282828;
+    }
+    .controls button {
+      background: #1db954;
+      border: none;
+      color: #000;
+      padding: 10px 18px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 14px;
+      transition: transform 0.1s;
+    }
+    .controls button:hover { transform: scale(1.05); }
+
+    .controls button.small {
+      background: transparent;
+      color: #777;
+      padding: 8px 10px;
+      font-size: 12px;
+      border-radius: 6px;
+    }
+    .controls button.small:hover { color: #fff; transform: none; }
+    .controls button.small.active { color: #1db954; }
+
+    #nowPlaying {
+      flex: 1;
+      font-size: 14px;
+      color: #b3b3b3;
+      margin-left: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="sidebar">
+    <h1>🎵 My Music</h1>
+    <input type="text" id="searchBox" placeholder="Search your songs…">
+    <p>Pick audio files. They're saved to your library automatically.</p>
+    <input type="file" id="filePicker" accept="audio/*" multiple>
+    <button id="clearBtn">Clear library</button>
+  </div>
+
+  <div class="main">
+    <h2>Your Playlist</h2>
+    <ul id="songList"></ul>
+  </div>
+
+  <div class="controls">
+    <button id="prevBtn">⏮</button>
+    <button id="playBtn">▶ Play</button>
+    <button id="nextBtn">⏭</button>
+    <button id="shuffleBtn" class="small">🔀 Shuffle</button>
+    <button id="repeatBtn" class="small">🔁 Repeat</button>
+    <div id="nowPlaying">Nothing playing</div>
+  </div>
+
+  <audio id="player"></audio>
+
+  <script>
+    // ---------- GRAB ELEMENTS ----------
+    const filePicker  = document.getElementById('filePicker');
+    const searchBox   = document.getElementById('searchBox');
+    const clearBtn    = document.getElementById('clearBtn');
+    const songList    = document.getElementById('songList');
+    const player      = document.getElementById('player');
+    const playBtn     = document.getElementById('playBtn');
+    const prevBtn     = document.getElementById('prevBtn');
+    const nextBtn     = document.getElementById('nextBtn');
+    const shuffleBtn  = document.getElementById('shuffleBtn');
+    const repeatBtn   = document.getElementById('repeatBtn');
+    const nowPlaying  = document.getElementById('nowPlaying');
+
+    // ---------- STATE ----------
+    let songs = [];            // [{ name, file, url }]
+    let currentIndex = -1;
+    let shuffleOn = false;
+    let repeatMode = 'off';    // 'off' | 'all' | 'one'
+    let searchTerm = '';
+    let db = null;             // the IndexedDB connection
+
+    // ---------- INDEXEDDB: open the database ----------
+    function openDB() {
+      return new Promise(function (resolve, reject) {
+        const request = indexedDB.open('musicAppDB', 1);
+
+        // Runs only the first time (or when we change the version number)
+        request.onupgradeneeded = function (event) {
+          const database = event.target.result;
+          if (!database.objectStoreNames.contains('songs')) {
+            database.createObjectStore('songs', { keyPath: 'id', autoIncrement: true });
+          }
+        };
+
+        request.onsuccess = function (event) {
+          db = event.target.result;
+          resolve();
+        };
+
+        request.onerror = function () {
+          reject(request.error);
+        };
+      });
+    }
+
+    // ---------- INDEXEDDB: save one file ----------
+    function saveFileToDB(name, file) {
+      if (!db) return;
+      const tx = db.transaction('songs', 'readwrite');
+      tx.objectStore('songs').add({ name: name, file: file });
+    }
+
+    // ---------- INDEXEDDB: load everything saved ----------
+    function loadSongsFromDB() {
+      return new Promise(function (resolve) {
+        if (!db) return resolve();
+
+        const tx = db.transaction('songs', 'readonly');
+        const request = tx.objectStore('songs').getAll();
+
+        request.onsuccess = function () {
+          request.result.forEach(function (item) {
+            songs.push({
+              name: item.name,
+              file: item.file,
+              url: URL.createObjectURL(item.file)
+            });
+          });
+          resolve();
+        };
+
+        request.onerror = function () { resolve(); };
+      });
+    }
+
+    // ---------- INDEXEDDB: wipe everything ----------
+    function clearDB() {
+      if (!db) return;
+      const tx = db.transaction('songs', 'readwrite');
+      tx.objectStore('songs').clear();
+    }
+
+    // ---------- STARTUP ----------
+    async function init() {
+      try {
+        await openDB();
+        await loadSongsFromDB();
+        renderPlaylist();
+      } catch (err) {
+        console.log('No persistence available (private mode?):', err);
+        renderPlaylist();
+      }
+    }
+    init();
+
+    // ---------- FILE PICKER ----------
+    filePicker.addEventListener('change', function () {
+      const files = filePicker.files;
+      const wasEmpty = songs.length === 0;
+
+      for (const file of files) {
+        const name = file.name.replace(/\.[^.]+$/, '');
+        const url = URL.createObjectURL(file);
+        songs.push({ name: name, file: file, url: url });
+        saveFileToDB(name, file);
+      }
+
+      filePicker.value = ''; // lets you pick the same file again later
+      renderPlaylist();
+
+      if (wasEmpty && songs.length > 0) {
+        playSong(0);
+      }
+    });
+
+    // ---------- SEARCH ----------
+    searchBox.addEventListener('input', function () {
+      searchTerm = searchBox.value;
+      renderPlaylist();
+    });
+
+    // ---------- RENDER THE LIST ----------
+    function renderPlaylist() {
+      songList.innerHTML = '';
+      const term = searchTerm.toLowerCase();
+
+      let shown = 0;
+
+      songs.forEach(function (song, index) {
+        if (term && !song.name.toLowerCase().includes(term)) return;
+
+        const li = document.createElement('li');
+        li.textContent = song.name;
+
+        if (index === currentIndex) li.classList.add('playing');
+
+        li.addEventListener('click', function () { playSong(index); });
+        songList.appendChild(li);
+        shown++;
+      });
+
+      if (shown === 0) {
+        const msg = document.createElement('div');
+        msg.id = 'emptyMsg';
+        msg.textContent = songs.length === 0
+          ? 'No songs yet. Pick some files on the left.'
+          : 'No songs match your search.';
+        songList.appendChild(msg);
+      }
+    }
+
+    // ---------- PLAY A SONG BY INDEX ----------
+    function playSong(index) {
+      if (index < 0 || index >= songs.length) return;
+
+      currentIndex = index;
+      player.src = songs[index].url;
+      player.play();
+
+      nowPlaying.textContent = 'Now playing: ' + songs[index].name;
+      playBtn.textContent = '⏸ Pause';
+      renderPlaylist();
+    }
+
+    // ---------- PLAY / PAUSE ----------
+    playBtn.addEventListener('click', function () {
+      if (currentIndex === -1) return;
+
+      if (player.paused) {
+        player.play();
+        playBtn.textContent = '⏸ Pause';
+      } else {
+        player.pause();
+        playBtn.textContent = '▶ Play';
+      }
+    });
+
+    // ---------- NEXT / PREV INDEX (with shuffle + repeat) ----------
+    function getNextIndex() {
+      if (songs.length === 0) return -1;
+      if (songs.length === 1) return 0;
+
+      if (shuffleOn) {
+        let r;
+        do { r = Math.floor(Math.random() * songs.length); }
+        while (r === currentIndex);
+        return r;
+      }
+
+      const n = currentIndex + 1;
+      if (n >= songs.length) {
+        return repeatMode === 'all' ? 0 : -1; // -1 means "stop"
+      }
+      return n;
+    }
+
+    function getPrevIndex() {
+      if (songs.length === 0) return -1;
+      if (songs.length === 1) return 0;
+
+      if (shuffleOn) {
+        let r;
+        do { r = Math.floor(Math.random() * songs.length); }
+        while (r === currentIndex);
+        return r;
+      }
+
+      return (currentIndex - 1 + songs.length) % songs.length;
+    }
+
+    nextBtn.addEventListener('click', function () {
+      const n = getNextIndex();
+      if (n === -1) return;
+      playSong(n);
+    });
+
+    prevBtn.addEventListener('click', function () {
+      const p = getPrevIndex();
+      if (p === -1) return;
+      playSong(p);
+    });
+
+    // ---------- SHUFFLE ----------
+    shuffleBtn.addEventListener('click', function () {
+      shuffleOn = !shuffleOn;
+      shuffleBtn.classList.toggle('active', shuffleOn);
+    });
+
+    // ---------- REPEAT (cycles off → all → one) ----------
+    repeatBtn.addEventListener('click', function () {
+      if (repeatMode === 'off') repeatMode = 'all';
+      else if (repeatMode === 'all') repeatMode = 'one';
+      else repeatMode = 'off';
+
+      repeatBtn.classList.toggle('active', repeatMode !== 'off');
+      repeatBtn.textContent = repeatMode === 'one' ? '🔂 Repeat one' : '🔁 Repeat';
+    });
+
+    // ---------- SONG ENDED ----------
+    player.addEventListener('ended', function () {
+      if (repeatMode === 'one') {
+        player.currentTime = 0;
+        player.play();
+        return;
+      }
+
+      const n = getNextIndex();
+      if (n === -1) {
+        playBtn.textContent = '▶ Play';
+        return;
+      }
+      playSong(n);
+    });
+
+    // ---------- CLEAR LIBRARY ----------
+    clearBtn.addEventListener('click', function () {
+      if (!confirm('Delete every song from your library? This cannot be undone.')) return;
+
+      songs = [];
+      currentIndex = -1;
+      player.pause();
+      player.currentTime = 0;
+      nowPlaying.textContent = 'Nothing playing';
+      playBtn.textContent = '▶ Play';
+      clearDB();
+      renderPlaylist();
+    });
+  </script>
+</body>
+</html>
